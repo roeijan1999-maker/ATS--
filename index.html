@@ -1299,9 +1299,7 @@ function importCSV(e) {
   const reader = new FileReader();
   reader.onload = ev => {
     const raw = ev.target.result.replace(/^﻿/, '');
-    const lines = raw.split(/
-?
-/).filter(l => l.trim());
+    const lines = raw.split(/\r?\n/).filter(l => l.trim());
     const sep = detectSeparator(lines[0]);
     let added = 0;
     const isFullExport = lines[0].includes('מקט');
