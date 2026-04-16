@@ -960,6 +960,74 @@ let inventory = [
 ];
 
 // ═══════════════════════════════════════════════
+// GOOGLE SHEETS
+// ═══════════════════════════════════════════════
+const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxi3COUjaQKFW2sqXhF89guE5E4wCyT8_t6HLbqIvp7TEn-Rk1VAuNxHduLD7KHbW0sSA/exec';
+
+function setSyncIndicator(status, msg) {
+  const el = document.getElementById('sync-indicator');
+  if (!el) return;
+  const map = {
+    loading: ['⟳ טוען...', 'var(--amber)'],
+    saving:  ['⟳ שומר...', 'var(--amber)'],
+    ok:      ['✓ מסונכרן', 'var(--green)'],
+    error:   ['✕ שגיאה', 'var(--red)'],
+  };
+  const [text, color] = map[status] || ['', 'var(--text3)'];
+  el.textContent = msg || text;
+  el.style.color = color;
+}
+
+async function loadFromSheets() {
+  setSyncIndicator('loading');
+  try {
+    const res = await fetch(SHEETS_URL);
+    const json = await res.json();
+    if (json.status === 'ok' && json.data && json.data.length > 0) {
+      inventory = json.data.map(r => ({
+        sku:    String(r['מקט']||''),
+        desc:   String(r['תיאור']||''),
+        qty:    parseInt(r['כמות'])||1,
+        status: String(r['סטטוס']||'תקין'),
+        loc:    String(r['מיקום']||''),
+        type:   String(r['סוג']||''),
+        notes:  String(r['הערות']||''),
+      }));
+      refresh();
+      setSyncIndicator('ok');
+      toast('נתונים נטענו מ-Google Sheets ✓', 'success');
+    } else {
+      setSyncIndicator('ok', '✓ גיליון ריק');
+    }
+  } catch(err) {
+    setSyncIndicator('error');
+    toast('שגיאה בחיבור ל-Google Sheets', '');
+    console.error('Sheets load error:', err);
+  }
+}
+
+async function saveToSheets() {
+  setSyncIndicator('saving');
+  const data = inventory.map(r => ({
+    'מקט': r.sku||'', 'תיאור': r.desc||'', 'כמות': r.qty||1,
+    'סטטוס': r.status||'תקין', 'מיקום': r.loc||'', 'סוג': r.type||'', 'הערות': r.notes||''
+  }));
+  try {
+    await fetch(SHEETS_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: {'Content-Type': 'text/plain'},
+      body: JSON.stringify({ action: 'save', data })
+    });
+    setSyncIndicator('ok');
+    toast('נשמר ב-Google Sheets ✓', 'success');
+  } catch(err) {
+    setSyncIndicator('error');
+    console.error('Sheets save error:', err);
+  }
+}
+
+// ═══════════════════════════════════════════════
 // CHARTS
 // ═══════════════════════════════════════════════
 let charts = {};
@@ -971,10 +1039,8 @@ function destroyCharts() {
 
 function renderCharts() {
   destroyCharts();
-
   const ok = inventory.filter(i => i.status === 'תקין').length;
   const bad = inventory.filter(i => i.status === 'תקול').length;
-
   const locCounts = {}, locUnits = {};
   inventory.forEach(r => {
     if (r.loc) {
@@ -983,81 +1049,34 @@ function renderCharts() {
     }
   });
   const sortedLocs = Object.entries(locCounts).sort((a,b) => b[1]-a[1]);
-
   const typeCounts = {};
   inventory.forEach(r => {
     const t = r.type || 'ללא סוג';
     typeCounts[t] = (typeCounts[t] || 0) + 1;
   });
   const typeEntries = Object.entries(typeCounts).sort((a,b) => b[1]-a[1]);
-
   const gridColor = 'rgba(255,255,255,0.06)';
   const tickColor = '#545c72';
 
   charts.status = new Chart(document.getElementById('chartStatus'), {
     type: 'doughnut',
-    data: {
-      labels: ['תקין','תקול'],
-      datasets: [{
-        data: [ok, bad],
-        backgroundColor: ['#34d399', '#f87171'],
-        borderWidth: 0,
-        hoverOffset: 6
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      cutout: '65%',
-      plugins: { legend: { display: false }, tooltip: { rtl: true } }
-    }
+    data: { labels: ['תקין','תקול'], datasets: [{ data: [ok, bad], backgroundColor: ['#34d399','#f87171'], borderWidth: 0, hoverOffset: 6 }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '65%', plugins: { legend: { display: false }, tooltip: { rtl: true } } }
   });
-
   charts.loc = new Chart(document.getElementById('chartLoc'), {
     type: 'bar',
-    data: {
-      labels: sortedLocs.map(e => e[0]),
-      datasets: [{ label: 'פריטים', data: sortedLocs.map(e => e[1]), backgroundColor: '#4f8ef7', borderWidth: 0, borderRadius: 4 }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { rtl: true } },
-      scales: {
-        y: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: tickColor, font: { size: 11 } } },
-        x: { grid: { display: false }, ticks: { color: tickColor, font: { size: 11 }, autoSkip: false, maxRotation: 0 } }
-      }
-    }
+    data: { labels: sortedLocs.map(e=>e[0]), datasets: [{ label:'פריטים', data: sortedLocs.map(e=>e[1]), backgroundColor:'#4f8ef7', borderWidth:0, borderRadius:4 }] },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false},tooltip:{rtl:true}}, scales:{ y:{beginAtZero:true,grid:{color:gridColor},ticks:{color:tickColor,font:{size:11}}}, x:{grid:{display:false},ticks:{color:tickColor,font:{size:11},autoSkip:false,maxRotation:0}} } }
   });
-
   charts.type = new Chart(document.getElementById('chartType'), {
     type: 'bar',
-    data: {
-      labels: typeEntries.map(e => e[0]),
-      datasets: [{ label: 'פריטים', data: typeEntries.map(e => e[1]), backgroundColor: '#7c6ff7', borderWidth: 0, borderRadius: 4 }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { rtl: true } },
-      scales: {
-        y: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: tickColor, font: { size: 11 } } },
-        x: { grid: { display: false }, ticks: { color: tickColor, font: { size: 11 }, autoSkip: false, maxRotation: 20 } }
-      }
-    }
+    data: { labels: typeEntries.map(e=>e[0]), datasets: [{ label:'פריטים', data: typeEntries.map(e=>e[1]), backgroundColor:'#7c6ff7', borderWidth:0, borderRadius:4 }] },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false},tooltip:{rtl:true}}, scales:{ y:{beginAtZero:true,grid:{color:gridColor},ticks:{color:tickColor,font:{size:11}}}, x:{grid:{display:false},ticks:{color:tickColor,font:{size:11},autoSkip:false,maxRotation:20}} } }
   });
-
   charts.units = new Chart(document.getElementById('chartUnits'), {
     type: 'bar',
-    data: {
-      labels: sortedLocs.map(e => e[0]),
-      datasets: [{ label: 'יחידות', data: sortedLocs.map(e => locUnits[e[0]] || 0), backgroundColor: '#2dd4bf', borderWidth: 0, borderRadius: 4 }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { rtl: true } },
-      scales: {
-        y: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: tickColor, font: { size: 11 } } },
-        x: { grid: { display: false }, ticks: { color: tickColor, font: { size: 11 }, autoSkip: false, maxRotation: 0 } }
-      }
-    }
+    data: { labels: sortedLocs.map(e=>e[0]), datasets: [{ label:'יחידות', data: sortedLocs.map(e=>locUnits[e[0]]||0), backgroundColor:'#2dd4bf', borderWidth:0, borderRadius:4 }] },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false},tooltip:{rtl:true}}, scales:{ y:{beginAtZero:true,grid:{color:gridColor},ticks:{color:tickColor,font:{size:11}}}, x:{grid:{display:false},ticks:{color:tickColor,font:{size:11},autoSkip:false,maxRotation:0}} } }
   });
 }
 
@@ -1069,26 +1088,21 @@ function updateMetrics() {
   const units = inventory.reduce((s, i) => s + (parseInt(i.qty) || 0), 0);
   const ok = inventory.filter(i => i.status === 'תקין').length;
   const bad = inventory.filter(i => i.status === 'תקול').length;
-  const okPct = total ? Math.round(ok/total*100) : 0;
-  const badPct = total ? Math.round(bad/total*100) : 0;
-
   document.getElementById('m-total').textContent = total;
   document.getElementById('m-units').textContent = units;
   document.getElementById('m-ok').textContent = ok;
   document.getElementById('m-bad').textContent = bad;
-  document.getElementById('m-ok-pct').textContent = okPct + '% מהמלאי';
-  document.getElementById('m-bad-pct').textContent = badPct + '% מהמלאי';
+  document.getElementById('m-ok-pct').textContent = (total ? Math.round(ok/total*100) : 0) + '% מהמלאי';
+  document.getElementById('m-bad-pct').textContent = (total ? Math.round(bad/total*100) : 0) + '% מהמלאי';
   document.getElementById('last-update').textContent = new Date().toLocaleDateString('he-IL', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
-
-  const faultyAlert = document.getElementById('faulty-alert');
   const faultyItems = inventory.filter(i => i.status === 'תקול');
+  const banner = document.getElementById('faulty-alert');
   if (faultyItems.length > 0) {
-    faultyAlert.style.display = 'flex';
-    document.getElementById('faulty-msg').textContent = faultyItems.length + ' פריטים תקולים מחכים לטיפול: ' + faultyItems.map(i => i.desc).join(', ');
+    banner.style.display = 'flex';
+    document.getElementById('faulty-msg').textContent = faultyItems.length + ' פריטים תקולים: ' + faultyItems.map(i => i.desc).join(', ');
   } else {
-    faultyAlert.style.display = 'none';
+    banner.style.display = 'none';
   }
-
   document.getElementById('inv-subtitle').textContent = total + ' פריטים · ' + units + ' יחידות';
 }
 
@@ -1098,12 +1112,8 @@ function updateMetrics() {
 function populateFilters() {
   const locs = [...new Set(inventory.map(i => i.loc).filter(Boolean))].sort();
   const types = [...new Set(inventory.map(i => i.type).filter(Boolean))].sort();
-
-  const locSel = document.getElementById('filter-loc');
-  locSel.innerHTML = '<option value="">כל המיקומים</option>' + locs.map(l => `<option>${l}</option>`).join('');
-
-  const typeSel = document.getElementById('filter-type');
-  typeSel.innerHTML = '<option value="">כל הסוגים</option>' + types.map(t => `<option>${t}</option>`).join('');
+  document.getElementById('filter-loc').innerHTML = '<option value="">כל המיקומים</option>' + locs.map(l => `<option>${l}</option>`).join('');
+  document.getElementById('filter-type').innerHTML = '<option value="">כל הסוגים</option>' + types.map(t => `<option>${t}</option>`).join('');
 }
 
 function filterTable() {
@@ -1111,16 +1121,11 @@ function filterTable() {
   const st = document.getElementById('filter-status').value;
   const lc = document.getElementById('filter-loc').value;
   const tp = document.getElementById('filter-type').value;
-
   const filtered = inventory.filter((r, idx) => {
     r._idx = idx;
-    const textMatch = !q || (r.sku||'').toLowerCase().includes(q) || (r.desc||'').toLowerCase().includes(q) || (r.loc||'').toLowerCase().includes(q) || (r.notes||'').toLowerCase().includes(q);
-    const stMatch = !st || r.status === st;
-    const lcMatch = !lc || r.loc === lc;
-    const tpMatch = !tp || r.type === tp;
-    return textMatch && stMatch && lcMatch && tpMatch;
+    return (!q || (r.sku||'').toLowerCase().includes(q) || (r.desc||'').toLowerCase().includes(q) || (r.loc||'').toLowerCase().includes(q) || (r.notes||'').toLowerCase().includes(q))
+      && (!st || r.status === st) && (!lc || r.loc === lc) && (!tp || r.type === tp);
   });
-
   renderTable(filtered);
   document.getElementById('table-count').textContent = filtered.length + ' / ' + inventory.length;
 }
@@ -1133,18 +1138,11 @@ function renderTable(data) {
   }
   tbody.innerHTML = data.map((r, i) => {
     const idx = r._idx !== undefined ? r._idx : i;
-    return `
-    <tr>
+    return `<tr>
       <td><span class="sku-text" title="${r.sku||''}">${r.sku || '—'}</span></td>
       <td style="font-weight:500;max-width:220px">${r.desc || '—'}</td>
       <td style="text-align:center;font-family:var(--mono);font-weight:600;color:#e8eaf0">${r.qty || 0}</td>
-      <td>
-        <span class="badge status-toggle ${r.status==='תקין'?'badge-ok':'badge-bad'}"
-          onclick="quickToggleStatus(${idx})"
-          title="לחץ להחלפת סטטוס">
-          ${r.status==='תקין'?'✓':'✕'} ${r.status}
-        </span>
-      </td>
+      <td><span class="badge status-toggle ${r.status==='תקין'?'badge-ok':'badge-bad'}" onclick="quickToggleStatus(${idx})" title="לחץ להחלפת סטטוס">${r.status==='תקין'?'✓':'✕'} ${r.status}</span></td>
       <td>${r.loc ? `<span class="loc-tag">${r.loc}</span>` : '<span style="color:var(--text3)">—</span>'}</td>
       <td>${r.type ? `<span class="type-tag">${r.type}</span>` : '<span style="color:var(--text3)">—</span>'}</td>
       <td style="font-size:12px;color:var(--text2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.notes||''}">${r.notes || ''}</td>
@@ -1152,8 +1150,8 @@ function renderTable(data) {
         <button class="action-btn-edit" onclick="openEditModal(${idx})" title="עריכה">✎</button>
         <button class="action-btn" onclick="deleteItem(${idx})" title="מחק">✕</button>
       </td>
-    </tr>
-  `}).join('');
+    </tr>`;
+  }).join('');
 }
 
 function deleteItem(idx) {
@@ -1164,16 +1162,11 @@ function deleteItem(idx) {
   toast('הפריט נמחק', 'success');
 }
 
-// ═══════════════════════════════════════════════
-// QUICK STATUS TOGGLE
-// ═══════════════════════════════════════════════
 function quickToggleStatus(idx) {
-  const item = inventory[idx];
-  const prev = item.status;
-  item.status = (item.status === 'תקין') ? 'תקול' : 'תקין';
+  inventory[idx].status = (inventory[idx].status === 'תקין') ? 'תקול' : 'תקין';
   refresh();
   saveToSheets();
-  toast('"' + item.desc + '" שונה ל-' + item.status, 'success');
+  toast('"' + inventory[idx].desc + '" שונה ל-' + inventory[idx].status, 'success');
 }
 
 // ═══════════════════════════════════════════════
@@ -1221,10 +1214,7 @@ function saveEdit() {
   toast('הפריט עודכן בהצלחה ✓', 'success');
 }
 
-// close modal on Escape key
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeEditModal();
-});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeEditModal(); });
 
 // ═══════════════════════════════════════════════
 // ADD ITEM
@@ -1232,8 +1222,7 @@ document.addEventListener('keydown', e => {
 function addItem() {
   const desc = document.getElementById('f-desc').value.trim();
   if (!desc) { showMsg('add-msg', 'חובה למלא תיאור רכיב', 'error'); return; }
-
-  const item = {
+  inventory.push({
     sku: document.getElementById('f-sku').value.trim(),
     desc,
     qty: parseInt(document.getElementById('f-qty').value) || 1,
@@ -1241,9 +1230,7 @@ function addItem() {
     loc: document.getElementById('f-loc').value,
     type: document.getElementById('f-type').value.trim(),
     notes: document.getElementById('f-notes').value.trim(),
-  };
-
-  inventory.push(item);
+  });
   refresh();
   saveToSheets();
   showMsg('add-msg', 'הפריט נוסף בהצלחה ✓', 'success');
@@ -1274,9 +1261,7 @@ function renderLocations() {
   const maxC = Math.max(...Object.values(counts), 1);
   const allLocs = ['A1','A2','A3','A4','A5','B1','B2','B3','B4','B5','C1','C2','C3','C4','C5','D1','D2','D3','D4','D5'];
   document.getElementById('loc-grid').innerHTML = allLocs.map(l => {
-    const c = counts[l] || 0;
-    const u = units[l] || 0;
-    const pct = Math.round((c/maxC)*100);
+    const c = counts[l]||0, u = units[l]||0, pct = Math.round((c/maxC)*100);
     return `<div class="loc-cell ${c>0?'has-items':''}">
       <div class="loc-name">${l}</div>
       <div class="loc-info">${c} פריטים<br>${u} יחידות</div>
@@ -1288,6 +1273,10 @@ function renderLocations() {
 // ═══════════════════════════════════════════════
 // IMPORT / EXPORT
 // ═══════════════════════════════════════════════
+function detectSeparator(line) {
+  return (line.match(/;/g)||[]).length >= (line.match(/,/g)||[]).length ? ';' : ',';
+}
+
 function parseCSVLine(line, sep) {
   const result = [];
   let cur = '', inQuotes = false;
@@ -1298,18 +1287,10 @@ function parseCSVLine(line, sep) {
       else inQuotes = !inQuotes;
     } else if (ch === sep && !inQuotes) {
       result.push(cur.trim()); cur = '';
-    } else {
-      cur += ch;
-    }
+    } else { cur += ch; }
   }
   result.push(cur.trim());
   return result;
-}
-
-function detectSeparator(firstLine) {
-  const semicolons = (firstLine.match(/;/g) || []).length;
-  const commas = (firstLine.match(/,/g) || []).length;
-  return semicolons >= commas ? ';' : ',';
 }
 
 function importCSV(e) {
@@ -1317,33 +1298,28 @@ function importCSV(e) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = ev => {
-    const raw = ev.target.result.replace(/^\uFEFF/, '');
-    const lines = raw.split(/\r?\n/).filter(l => l.trim());
-    let added = 0, replaced = false;
+    const raw = ev.target.result.replace(/^﻿/, '');
+    const lines = raw.split(/
+?
+/).filter(l => l.trim());
     const sep = detectSeparator(lines[0]);
-    const header = parseCSVLine(lines[0], sep);
-    const isFullExport = header[0] === 'מקט' && header[1] === 'תיאור';
-    if (isFullExport) {
-      if (confirm('האם לאפס את המלאי הנוכחי ולטעון את הקובץ מחדש?\n(לחץ ביטול כדי להוסיף לנתונים הקיימים)')) {
-        inventory = [];
-        replaced = true;
-      }
+    let added = 0;
+    const isFullExport = lines[0].includes('מקט');
+    if (isFullExport && confirm('לאפס את המלאי הנוכחי ולטעון מחדש?
+(ביטול = הוסף לנתונים הקיימים)')) {
+      inventory = [];
     }
     lines.slice(1).forEach(line => {
       if (!line.trim()) return;
       const p = parseCSVLine(line, sep);
       if (p.length >= 2 && (p[0]||p[1]||'').trim()) {
-        inventory.push({
-          sku: p[0]||'', desc: p[1]||'',
-          qty: parseInt(p[2])||1, status: p[3]||'תקין',
-          loc: p[4]||'', type: p[5]||'', notes: p[6]||''
-        });
+        inventory.push({ sku:p[0]||'', desc:p[1]||'', qty:parseInt(p[2])||1, status:p[3]||'תקין', loc:p[4]||'', type:p[5]||'', notes:p[6]||'' });
         added++;
       }
     });
     refresh();
-    const msg = replaced ? 'המלאי הוחלף: ' + added + ' פריטים נטענו ✓' : 'יובאו ' + added + ' פריטים בהצלחה ✓';
-    showMsg('import-msg', msg, 'success');
+    saveToSheets();
+    showMsg('import-msg', 'יובאו ' + added + ' פריטים ✓', 'success');
     toast(added + ' פריטים יובאו', 'success');
   };
   reader.readAsText(file, 'UTF-8');
@@ -1354,23 +1330,19 @@ function exportCSV() {
   const sep = ';';
   const header = ['מקט','תיאור','כמות','סטטוס','מיקום','סוג','הערות'].join(sep);
   const rows = inventory.map(r =>
-    [r.sku,r.desc,r.qty,r.status,r.loc,r.type,r.notes]
-      .map(v => {
-        const s = (v === null || v === undefined) ? '' : String(v);
-        return s.includes(sep) || s.includes('"') || s.includes('\n')
-          ? '"' + s.replace(/"/g, '""') + '"'
-          : s;
-      })
-      .join(sep)
+    [r.sku,r.desc,r.qty,r.status,r.loc,r.type,r.notes].map(v => {
+      const s = String(v===null||v===undefined?'':v);
+      return s.includes(sep)||s.includes('"')||s.includes('
+') ? '"'+s.replace(/"/g,'""')+'"' : s;
+    }).join(sep)
   );
-  const csv = [header, ...rows].join('\r\n');
-  const blob = new Blob(['\uFEFF' + csv], {type: 'text/csv;charset=utf-8'});
+  const csv = [header,...rows].join('
+');
+  const blob = new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = 'מחסן_SPEA_' + new Date().toISOString().slice(0,10) + '.csv';
-  a.click();
-  URL.revokeObjectURL(url);
+  a.href = url; a.download = 'מחסן_SPEA_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click(); URL.revokeObjectURL(url);
   toast('הקובץ הורד בהצלחה', 'success');
 }
 
@@ -1402,7 +1374,7 @@ function toast(msg, type) {
 }
 
 // ═══════════════════════════════════════════════
-// FULL REFRESH
+// REFRESH
 // ═══════════════════════════════════════════════
 function refresh() {
   updateMetrics();
@@ -1410,88 +1382,6 @@ function refresh() {
   populateFilters();
   filterTable();
   renderLocations();
-}
-
-// ═══════════════════════════════════════════════
-// GOOGLE SHEETS SYNC
-// ═══════════════════════════════════════════════
-const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbx9kzopS0yHWbS_sPn9nLN2f4KURO21Vah2FFbnoBFRaO1Y60DBQtqhHsIB72lamic4Ew/exec';
-let syncStatus = 'idle'; // idle | loading | saving | error
-
-function setSyncIndicator(status, msg) {
-  syncStatus = status;
-  const el = document.getElementById('sync-indicator');
-  if (!el) return;
-  const map = {
-    loading: { text: '⟳ טוען נתונים...', color: 'var(--amber)' },
-    saving:  { text: '⟳ שומר...', color: 'var(--amber)' },
-    ok:      { text: '✓ מסונכרן', color: 'var(--green)' },
-    error:   { text: '✕ שגיאת סנכרון', color: 'var(--red)' },
-  };
-  const s = map[status] || { text: '', color: 'var(--text3)' };
-  el.textContent = msg || s.text;
-  el.style.color = s.color;
-}
-
-async function loadFromSheets() {
-  setSyncIndicator('loading');
-  try {
-    const res = await fetch(SHEETS_URL);
-    const json = await res.json();
-    if (json.status === 'ok' && json.data && json.data.length > 0) {
-      inventory = json.data.map(r => ({
-        sku:    String(r['מקט']||''),
-        desc:   String(r['תיאור']||''),
-        qty:    parseInt(r['כמות'])||1,
-        status: String(r['סטטוס']||'תקין'),
-        loc:    String(r['מיקום']||''),
-        type:   String(r['סוג']||''),
-        notes:  String(r['הערות']||''),
-      }));
-      refresh();
-      setSyncIndicator('ok');
-      toast('נתונים נטענו מ-Google Sheets ✓', 'success');
-    } else {
-      setSyncIndicator('ok', '✓ גיליון ריק');
-    }
-  } catch(err) {
-    setSyncIndicator('error');
-    toast('לא ניתן להתחבר ל-Google Sheets', '');
-    console.error(err);
-  }
-}
-
-async function saveToSheets() {
-  setSyncIndicator('saving');
-  const data = inventory.map(r => ({
-    'מקט': r.sku||'', 'תיאור': r.desc||'', 'כמות': r.qty||1,
-    'סטטוס': r.status||'תקין', 'מיקום': r.loc||'', 'סוג': r.type||'', 'הערות': r.notes||''
-  }));
-  try {
-    await fetch(SHEETS_URL, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save', data })
-    });
-    setSyncIndicator('ok');
-    toast('נשמר ב-Google Sheets ✓', 'success');
-  } catch(err) {
-    setSyncIndicator('error');
-    toast('שגיאה בשמירה ל-Google Sheets', '');
-    console.error(err);
-  }
-}
-
-// Auto-save after every change
-const _origRefresh = refresh;
-function refresh() {
-  _origRefresh();
-}
-
-function refreshAndSave() {
-  refresh();
-  saveToSheets();
 }
 
 // ═══════════════════════════════════════════════
