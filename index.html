@@ -593,7 +593,9 @@
       <span class="nav-icon">↑</span> ייבוא נתונים
     </div>
     <div class="sidebar-footer">
-      <div class="version">v1.0 · SPEA IL</div>
+      <div id="sync-indicator" style="font-size:11px;margin-bottom:6px;color:var(--text3)">מתחבר...</div>
+      <button onclick="loadFromSheets()" style="background:none;border:1px solid var(--border2);color:var(--text2);font-size:11px;padding:5px 10px;border-radius:6px;cursor:pointer;width:100%;font-family:var(--font);margin-bottom:8px;" title="טען מחדש מ-Google Sheets">⟳ רענן נתונים</button>
+      <div class="version">v2.0 · SPEA IL · Sheets</div>
     </div>
   </nav>
 
@@ -1158,6 +1160,7 @@ function deleteItem(idx) {
   if (!confirm('למחוק את הפריט "' + inventory[idx].desc + '"?')) return;
   inventory.splice(idx, 1);
   refresh();
+  saveToSheets();
   toast('הפריט נמחק', 'success');
 }
 
@@ -1169,6 +1172,7 @@ function quickToggleStatus(idx) {
   const prev = item.status;
   item.status = (item.status === 'תקין') ? 'תקול' : 'תקין';
   refresh();
+  saveToSheets();
   toast('"' + item.desc + '" שונה ל-' + item.status, 'success');
 }
 
@@ -1213,6 +1217,7 @@ function saveEdit() {
   document.getElementById('edit-modal-overlay').classList.remove('open');
   editingIdx = -1;
   refresh();
+  saveToSheets();
   toast('הפריט עודכן בהצלחה ✓', 'success');
 }
 
@@ -1240,6 +1245,7 @@ function addItem() {
 
   inventory.push(item);
   refresh();
+  saveToSheets();
   showMsg('add-msg', 'הפריט נוסף בהצלחה ✓', 'success');
   toast('פריט חדש נוסף למלאי', 'success');
   ['f-sku','f-desc','f-type','f-notes'].forEach(id => document.getElementById(id).value = '');
@@ -1407,12 +1413,94 @@ function refresh() {
 }
 
 // ═══════════════════════════════════════════════
+// GOOGLE SHEETS SYNC
+// ═══════════════════════════════════════════════
+const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbx9kzopS0yHWbS_sPn9nLN2f4KURO21Vah2FFbnoBFRaO1Y60DBQtqhHsIB72lamic4Ew/exec';
+let syncStatus = 'idle'; // idle | loading | saving | error
+
+function setSyncIndicator(status, msg) {
+  syncStatus = status;
+  const el = document.getElementById('sync-indicator');
+  if (!el) return;
+  const map = {
+    loading: { text: '⟳ טוען נתונים...', color: 'var(--amber)' },
+    saving:  { text: '⟳ שומר...', color: 'var(--amber)' },
+    ok:      { text: '✓ מסונכרן', color: 'var(--green)' },
+    error:   { text: '✕ שגיאת סנכרון', color: 'var(--red)' },
+  };
+  const s = map[status] || { text: '', color: 'var(--text3)' };
+  el.textContent = msg || s.text;
+  el.style.color = s.color;
+}
+
+async function loadFromSheets() {
+  setSyncIndicator('loading');
+  try {
+    const res = await fetch(SHEETS_URL);
+    const json = await res.json();
+    if (json.status === 'ok' && json.data && json.data.length > 0) {
+      inventory = json.data.map(r => ({
+        sku:    String(r['מקט']||''),
+        desc:   String(r['תיאור']||''),
+        qty:    parseInt(r['כמות'])||1,
+        status: String(r['סטטוס']||'תקין'),
+        loc:    String(r['מיקום']||''),
+        type:   String(r['סוג']||''),
+        notes:  String(r['הערות']||''),
+      }));
+      refresh();
+      setSyncIndicator('ok');
+      toast('נתונים נטענו מ-Google Sheets ✓', 'success');
+    } else {
+      setSyncIndicator('ok', '✓ גיליון ריק');
+    }
+  } catch(err) {
+    setSyncIndicator('error');
+    toast('לא ניתן להתחבר ל-Google Sheets', '');
+    console.error(err);
+  }
+}
+
+async function saveToSheets() {
+  setSyncIndicator('saving');
+  const data = inventory.map(r => ({
+    'מקט': r.sku||'', 'תיאור': r.desc||'', 'כמות': r.qty||1,
+    'סטטוס': r.status||'תקין', 'מיקום': r.loc||'', 'סוג': r.type||'', 'הערות': r.notes||''
+  }));
+  try {
+    await fetch(SHEETS_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save', data })
+    });
+    setSyncIndicator('ok');
+    toast('נשמר ב-Google Sheets ✓', 'success');
+  } catch(err) {
+    setSyncIndicator('error');
+    toast('שגיאה בשמירה ל-Google Sheets', '');
+    console.error(err);
+  }
+}
+
+// Auto-save after every change
+const _origRefresh = refresh;
+function refresh() {
+  _origRefresh();
+}
+
+function refreshAndSave() {
+  refresh();
+  saveToSheets();
+}
+
+// ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
 window.addEventListener('DOMContentLoaded', () => {
   refresh();
-  // Set initial table count
   document.getElementById('table-count').textContent = inventory.length + ' / ' + inventory.length;
+  loadFromSheets();
 });
 </script>
 </body>
